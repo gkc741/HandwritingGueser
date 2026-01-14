@@ -2,7 +2,6 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
-#include <omp.h>
 
 #include "neuron.h"
 
@@ -375,4 +374,5 @@ int main(){
     free_dataset(&ds);
     return 0;
 }
+
 
