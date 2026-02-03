@@ -143,6 +143,7 @@ struct dataset read_data(const char* image_file, const char* label_file){
 
 void free_dataset(struct dataset dataset){
     free(dataset.data);
+    free(dataset.labels);
 }
 
 
@@ -379,6 +380,10 @@ float train_NN(dataset dataset, layer* hidden_layer, layer* output_layer, float 
         if(prediction == dataset.labels[i]) accuracy++;
     }
     accuracy =(100.0 * accuracy) / dataset.nr_of_images;
+    
+    free(accumilated_error_output);
+    free(accumilated_error_hidden);
+    
     return accuracy;
 }
 
@@ -393,6 +398,10 @@ float test_on_data(dataset dataset, layer* hidden_layer, layer* output_layer){
         
         int prediction = actual_prediction(probs);
         if(prediction == dataset.labels[i]) accuracy++;
+        
+        free(hidden_output.output_list);
+        free(output_output.output_list);
+        free(probs.output_list);
     }
     accuracy =(100.0 * accuracy) / dataset.nr_of_images;
     return accuracy;
