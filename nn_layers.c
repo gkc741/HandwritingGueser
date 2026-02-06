@@ -4,6 +4,7 @@
 #include <stdio.h>
 #include <string.h>
 #include <math.h>
+#include <omp.h>
 
 
 typedef struct layer{
@@ -163,15 +164,16 @@ typedef struct {
 
 
 output calc_hidden_layer_output(struct dataset dataset, struct layer hidden_layer, int img_indx){
-    output output;
+    output output = {NULL, hidden_layer.nr_of_neurons};
     output.output_list = malloc(sizeof(float) * hidden_layer.nr_of_neurons);
-    output.size = hidden_layer.nr_of_neurons;
 
     float temp;
     // I NEED TO TIMES THE INPUT BY THE WEIGHTS
     // BUT THE INPUT IS 784 LONG AND THE WEIGHTS IS 784 * NR_OF_NEURONS
     // I NEED FOR EVERY INPUT TIMES IT BY WEIGHTS AND THEN MOVE WEIGHTS 784 WHICH IS THE LENGTH OF ONE NEURONS WEIGHTS
     float* image_data = &dataset.data[img_indx * dataset.data_size];
+
+    #pragma omp parallel for private(temp)  // improveed it from 14 to 12 sec
     for(int j = 0; j < hidden_layer.nr_of_neurons; j++){ // so for every neuron
         temp = hidden_layer.bias[j];
         for(int i = 0; i < hidden_layer.in_size; i++){  // in size should be the dataset row * cols
@@ -190,6 +192,7 @@ output calc_output_layer_output(float* output_of_hidden_layer, struct layer outp
 
     float temp;
     // I NEED TO SAY OUTPUT = INPUT(WHICH IS OUTPUT OF HIDDEN LAYER) @ WEIGHTS + BIAS
+    #pragma omp parallel for private(temp)
     for(int i = 0; i < output_layer.nr_of_neurons; i++){
         temp = output_layer.bias[i];
         for(int j = 0; j < output_layer.in_size; j++){
@@ -239,7 +242,7 @@ float calc_loss(dataset dataset, float* predictioin_probabilities, int img_indx)
 }
 
 
-int actual_prediction(output prob_prediction_list){
+int argmax(output prob_prediction_list){
     // FIND THE PREDICTID CLASS
     int pred_class = 0;
     float max_prob = prob_prediction_list.output_list[0];
@@ -269,6 +272,7 @@ float* hidden_layer_errors(output hidden_layer_output, layer output_layer, float
     int size = hidden_layer_output.size;
     float* error_list_of_hidden = malloc(sizeof(float) * size);
 
+    #pragma omp parallel for
     for(int i = 0; i < size; i++){
         if(hidden_layer_output.output_list[i] <= 0){
             error_list_of_hidden[i] = 0;
@@ -289,6 +293,7 @@ float* hidden_layer_errors(output hidden_layer_output, layer output_layer, float
 
 void update_output_weights_and_bias(layer* output_layer, float* error_list_of_output, float eta, output hidden_layer_output){
     // for every neuron (10)
+    #pragma omp parallel for
     for(int i = 0; i < output_layer->nr_of_neurons; i++){
         // for every weight of every neuron (100)
         for(int j = 0; j < output_layer->in_size; j++){
@@ -300,14 +305,11 @@ void update_output_weights_and_bias(layer* output_layer, float* error_list_of_ou
 }
 
 
-
-
-void update_hidden_weights_and_bias(layer* hidden_layer, float* error_list_of_hidden, dataset dataset, float eta, int img_indx){
-    float* input_values = &dataset.data[img_indx * dataset.data_size]; // pointer to the element and then you just get the next one cuz of malloc
-
+void update_hidden_weights_and_bias(layer* hidden_layer, float* error_list_of_hidden, float eta, float* avg_pixl_values){
+    #pragma omp parallel for  // this just improved it from 12 to 4 sec
     for(int i = 0; i < hidden_layer->nr_of_neurons; i++){
         for(int j = 0; j < hidden_layer->in_size; j++){
-            hidden_layer->weights[i * hidden_layer->in_size + j] -= eta * error_list_of_hidden[i] * input_values[j];
+            hidden_layer->weights[i * hidden_layer->in_size + j] -= eta * error_list_of_hidden[i] * avg_pixl_values[j];
         }
         hidden_layer->bias[i] -= eta * error_list_of_hidden[i];
     }
@@ -315,61 +317,29 @@ void update_hidden_weights_and_bias(layer* hidden_layer, float* error_list_of_hi
 }
 
 
-float train_NN(dataset dataset, layer* hidden_layer, layer* output_layer, float eta, int batch_size){
+
+
+float train_NN(dataset dataset, layer* hidden_layer, layer* output_layer, float eta){
     float accuracy = 0.0;
 
-    // ACCUMILATE ERRORS FOR BATCH TRAINING
-    float* accumilated_error_output = malloc(sizeof(float) * output_layer->nr_of_neurons);
-    float* accumilated_error_hidden = malloc(sizeof(float) * hidden_layer->nr_of_neurons);
-
-    for(int j = 0; j < output_layer->nr_of_neurons; j++) accumilated_error_output[j] = 0;
-    for(int j = 0; j < hidden_layer->nr_of_neurons; j++) accumilated_error_hidden[j] = 0;
 
     for(int i = 0; i < dataset.nr_of_images; i++){
         // FORWARD
         output hidden_output = calc_hidden_layer_output(dataset, *hidden_layer, i);
-    
         output output_output = calc_output_layer_output(hidden_output.output_list, *output_layer);
-    
         output probs = calc_softmax_prob(&output_output);
-    
-        int prediction = actual_prediction(probs);
-
+        int prediction = argmax(probs);
 
         // BACKWARD
-    
-    
-        // I NEED TO CALC ERRORS EVERY TIME 
-        // calc errors
+        // CALC ERRORS
         float* error_output = output_layer_errors(dataset, probs, i);
         float* error_hidden = hidden_layer_errors(hidden_output, *output_layer, error_output);
-        
-        // assign to accumilated
-        for(int j = 0; j < output_layer->nr_of_neurons; j++){
-            accumilated_error_output[j] += error_output[j];
-        }
 
-        for(int j = 0; j < hidden_layer->nr_of_neurons; j++){
-            accumilated_error_hidden[j] += error_hidden[j];
-        }
 
-        if((i + 1) % batch_size == 0){
-            // average them
-            for(int j = 0; j < output_layer->nr_of_neurons; j++){
-                accumilated_error_output[j] /= batch_size; 
-            }   
-        
-            for(int j = 0; j < hidden_layer->nr_of_neurons; j++){
-                accumilated_error_hidden[j] /= batch_size;  
-            }
-            
-            // update weights
-            update_hidden_weights_and_bias(hidden_layer, accumilated_error_hidden, dataset, eta, i);
-            update_output_weights_and_bias(output_layer, accumilated_error_output, eta, hidden_output);
-
-            for(int j = 0; j < output_layer->nr_of_neurons; j++) accumilated_error_output[j] = 0;
-            for(int j = 0; j < hidden_layer->nr_of_neurons; j++) accumilated_error_hidden[j] = 0;
-        }
+        // UPDATE EVERY TIME (BATCH TRAINING WAS SLOWER AND WORSE)
+        float* image_data = &dataset.data[i * dataset.data_size];
+        update_hidden_weights_and_bias(hidden_layer, error_hidden, eta, image_data);
+        update_output_weights_and_bias(output_layer, error_output, eta, hidden_output);
 
         free(hidden_output.output_list);
         free(output_output.output_list);
@@ -379,11 +349,8 @@ float train_NN(dataset dataset, layer* hidden_layer, layer* output_layer, float 
 
         if(prediction == dataset.labels[i]) accuracy++;
     }
-    accuracy =(100.0 * accuracy) / dataset.nr_of_images;
     
-    free(accumilated_error_output);
-    free(accumilated_error_hidden);
-    
+    accuracy = (100.0 * accuracy) / dataset.nr_of_images;
     return accuracy;
 }
 
@@ -391,17 +358,13 @@ float test_on_data(dataset dataset, layer* hidden_layer, layer* output_layer){
     float accuracy = 0.0;
     for(int i = 0; i < dataset.nr_of_images; i++){
         output hidden_output = calc_hidden_layer_output(dataset, *hidden_layer, i);
-    
         output output_output = calc_output_layer_output(hidden_output.output_list, *output_layer);
-    
-        output probs = calc_softmax_prob(&output_output);
-        
-        int prediction = actual_prediction(probs);
+        // NO NEED FOR SOFTMAX
+        int prediction = argmax(output_output);
         if(prediction == dataset.labels[i]) accuracy++;
         
         free(hidden_output.output_list);
         free(output_output.output_list);
-        free(probs.output_list);
     }
     accuracy =(100.0 * accuracy) / dataset.nr_of_images;
     return accuracy;
@@ -414,9 +377,11 @@ int main(){
 
     printf("\n==== LOADING TRAINING DATA ====\n");
     dataset ds = read_data("archive/bin_data/train/train-images.idx3-ubyte", "archive/bin_data/train/train-labels.idx1-ubyte");
-    
+
+
     printf("\n==== LOADING TEST DATA ====\n");
     dataset test_data = read_data("archive/bin_data/test/t10k-images.idx3-ubyte", "archive/bin_data/test/t10k-labels.idx1-ubyte");
+
 
     int nr_of_neurons = 100;
     int nr_of_input = ds.data_size;
@@ -426,7 +391,7 @@ int main(){
 
     float eta = 0.01;
 
-    int batch_size = 1;
+
     // KEEP BATCH AT 1 BECAUSE update_hidden_weights_and_bias DOSENT WORK WITH THE i INPUT PROPERRLY
     
     int epochs = 2;
@@ -434,7 +399,7 @@ int main(){
 
     printf("\n==== TRAINING AND TESTING====\n");
     for(int run = 0; run < epochs; run++){
-        float accuracy_train = train_NN(ds, &hidden_layer, &output_layer, eta, batch_size);
+        float accuracy_train = train_NN(ds, &hidden_layer, &output_layer, eta);
         float accuracy = test_on_data(test_data, &hidden_layer, &output_layer);
         // printf("Accuracy: %.2f%%\n", accuracy_train);
         // printf("accyracy test: %.2f%%\n\n", accuracy);
@@ -445,8 +410,8 @@ int main(){
     
     free_layer(hidden_layer);
     free_layer(output_layer);
-    free_dataset(ds);
     free_dataset(test_data);
+    free_dataset(ds);
 
     return 0;
 }
