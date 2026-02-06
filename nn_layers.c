@@ -33,10 +33,12 @@ struct layer create_ran_layer(int nr_of_neurons, int nr_of_inputs){
         n.bias[i] = ((float)rand() / RAND_MAX) * 0.002 - 0.001;  // random biasa between [-0.001, 0.001]
     }
     
+    // He scale 
+    float he_scale = sqrt(2.0 / nr_of_inputs);
     // i want in_size weights pr neuron so i need the input size they are going to take
     n.weights = malloc(nr_of_inputs * nr_of_neurons * sizeof(float));
     for(int i = 0; i < nr_of_inputs * nr_of_neurons; i++){
-        n.weights[i] = ((float)rand() / RAND_MAX) * 0.02 - 0.01;  // random weight between [-0.01, 0.01]
+        n.weights[i] = (((float)rand() / RAND_MAX) * 2.0 - 1.0) * he_scale; 
     }
     return n;
 }
@@ -383,19 +385,19 @@ int main(){
     dataset test_data = read_data("archive/bin_data/test/t10k-images.idx3-ubyte", "archive/bin_data/test/t10k-labels.idx1-ubyte");
 
 
-    int nr_of_neurons = 100;
+    int nr_of_neurons = 200;
     int nr_of_input = ds.data_size;
 
     layer hidden_layer = create_ran_layer(nr_of_neurons, nr_of_input);
     layer output_layer = create_ran_layer(10, hidden_layer.nr_of_neurons);
 
-    float eta = 0.01;
+    float eta = 0.02;
+
 
 
     // KEEP BATCH AT 1 BECAUSE update_hidden_weights_and_bias DOSENT WORK WITH THE i INPUT PROPERRLY
     
-    int epochs = 2;
-    // after 2 i get overfitting
+    int epochs = 20;
 
     printf("\n==== TRAINING AND TESTING====\n");
     for(int run = 0; run < epochs; run++){
@@ -403,7 +405,8 @@ int main(){
         float accuracy = test_on_data(test_data, &hidden_layer, &output_layer);
         // printf("Accuracy: %.2f%%\n", accuracy_train);
         // printf("accyracy test: %.2f%%\n\n", accuracy);
-        printf("epoch %d: train=%.2f%%, test=%.2f%%, diff=%.2f\n", run + 1, accuracy_train, accuracy, accuracy_train - accuracy);
+        eta *= 0.95;
+        printf("epoch %d: train=%.2f%%, test=%.2f%%, diff=%.2f, eta=%.5f\n", run + 1, accuracy_train, accuracy, accuracy_train - accuracy, eta);
     }
     
     
