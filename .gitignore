@@ -1,0 +1,9 @@
+# Ignore Makefiles
+Makefile
+makefile
+
+# Ignore PDF files
+*.pdf
+
+#Ignore folder
+archive/
