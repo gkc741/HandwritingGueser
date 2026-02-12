@@ -165,10 +165,9 @@ typedef struct {
 }output;
 
 
-output calc_hidden_layer_output(struct dataset dataset, struct layer hidden_layer, int img_indx){
-    output output = {NULL, hidden_layer.nr_of_neurons};
-    output.output_list = malloc(sizeof(float) * hidden_layer.nr_of_neurons);
-
+void calc_hidden_layer_output(struct dataset dataset, struct layer hidden_layer, int img_indx, output* input){
+    input->size = hidden_layer.nr_of_neurons;
+    
     float temp;
     // I NEED TO TIMES THE INPUT BY THE WEIGHTS
     // BUT THE INPUT IS 784 LONG AND THE WEIGHTS IS 784 * NR_OF_NEURONS
@@ -182,15 +181,13 @@ output calc_hidden_layer_output(struct dataset dataset, struct layer hidden_laye
             // basically for every dataset item for every neuron
             temp += hidden_layer.weights[j * hidden_layer.in_size + i] * image_data[i];
         }
-        output.output_list[j] = relu(temp);
+        input->output_list[j] = relu(temp);
     }
-    return output;
 }
 
 
-output calc_output_layer_output(float* output_of_hidden_layer, struct layer output_layer){
-    output output = {NULL, output_layer.nr_of_neurons};
-    output.output_list = malloc(sizeof(float) * output_layer.nr_of_neurons);
+void calc_output_layer_output(float* output_of_hidden_layer, struct layer output_layer, output* input){
+    input->size = output_layer.nr_of_neurons;
 
     float temp;
     // I NEED TO SAY OUTPUT = INPUT(WHICH IS OUTPUT OF HIDDEN LAYER) @ WEIGHTS + BIAS
@@ -200,38 +197,38 @@ output calc_output_layer_output(float* output_of_hidden_layer, struct layer outp
         for(int j = 0; j < output_layer.in_size; j++){
             temp += output_layer.weights[i * output_layer.in_size + j] * output_of_hidden_layer[j];
         }
-        output.output_list[i] = temp;
+        input->output_list[i] = temp;
     }
-    return output;
 }
 
 // TURN THE OUTPUT FROM OUTPUT LAYER INTO PROBABILITIES USING SOFTMAX
-output calc_softmax_prob(output* output_of_output_layer){
-    output z = {NULL, output_of_output_layer->size};
-    z.output_list = malloc(sizeof(float) * output_of_output_layer->size);
+void calc_softmax_prob(output* output_of_output_layer, output* input){
+    // output z = {NULL, output_of_output_layer->size};
+    // z.output_list = malloc(sizeof(float) * output_of_output_layer->size);
+    input->size = output_of_output_layer->size;
     // FIRST WE FIND THE LATRGEST VALUE
     float max = output_of_output_layer->output_list[0];
     for(int i = 0; i < output_of_output_layer->size; i++){
-        z.output_list[i] = output_of_output_layer->output_list[i];
-        if (z.output_list[i] > max){
-            max = z.output_list[i];
+        input->output_list[i] = output_of_output_layer->output_list[i];
+        if (input->output_list[i] > max){
+            max = input->output_list[i];
         }
     }
 
     // THEN WE EXPONENTIATE AND MINUS THE MAX VALUE AND SUM IT
     float sum_exp = 0.0;
     for(int i = 0; i < output_of_output_layer->size; i++){
-        z.output_list[i] = exp(z.output_list[i] - max);
-        sum_exp += z.output_list[i];
+        input->output_list[i] = exp(input->output_list[i] - max);
+        sum_exp += input->output_list[i];
     }
 
 
     // THEN WE DEVVIDE BY THE SUM TO GET THE PROBABILITY
     for(int i = 0; i < output_of_output_layer->size; i++){
-        z.output_list[i] /= sum_exp;
+        input->output_list[i] /= sum_exp;
     }
 
-    return z;    // THIS IS A LIST OF 10 WITH THE PROBABILITY OF EACH BEING THE ONE
+    // return z;    // THIS IS A LIST OF 10 WITH THE PROBABILITY OF EACH BEING THE ONE
 }
 
 
@@ -257,27 +254,26 @@ int argmax(output prob_prediction_list){
     return pred_class;
 }
 
-float* output_layer_errors(dataset dataset, output prob_prediction, int img_indx){
+void output_layer_errors(dataset dataset, output prob_prediction, int img_indx, float* input){
     int label = dataset.labels[img_indx];
 
-    float* error_list_of_output = malloc(sizeof(float) * prob_prediction.size);
+    // float* error_list_of_output = malloc(sizeof(float) * prob_prediction.size);
     
     for(int i = 0; i < prob_prediction.size; i++){
         float t = (i == label) ? 1.0 : 0.0;
-        error_list_of_output[i] = prob_prediction.output_list[i] - t;
+        input[i] = prob_prediction.output_list[i] - t;
     }
-    return error_list_of_output;
 }
 
 
-float* hidden_layer_errors(output hidden_layer_output, layer output_layer, float* error_list_of_output){
+void hidden_layer_errors(output hidden_layer_output, layer output_layer, float* error_list_of_output, float* input){
     int size = hidden_layer_output.size;
-    float* error_list_of_hidden = malloc(sizeof(float) * size);
+    // float* error_list_of_hidden = malloc(sizeof(float) * size);
 
     #pragma omp parallel for
     for(int i = 0; i < size; i++){
         if(hidden_layer_output.output_list[i] <= 0){
-            error_list_of_hidden[i] = 0;
+            input[i] = 0;
             continue;
         }
         float sum = 0;
@@ -285,9 +281,8 @@ float* hidden_layer_errors(output hidden_layer_output, layer output_layer, float
             sum += error_list_of_output[j] * output_layer.weights[j * output_layer.in_size + i];
         // BAD SPATIAL LOCALITY BUT WITH EARLY CONTINUE AND SPARSE RELU ITS WORTH
         }
-        error_list_of_hidden[i] = sum;
+        input[i] = sum;
     }
-    return error_list_of_hidden;
 }
 
 
@@ -308,7 +303,7 @@ void update_output_weights_and_bias(layer* output_layer, float* error_list_of_ou
 
 
 void update_hidden_weights_and_bias(layer* hidden_layer, float* error_list_of_hidden, float eta, float* avg_pixl_values){
-    #pragma omp parallel for  // this just improved it from 12 to 4 sec
+    #pragma omp parallel for 
     for(int i = 0; i < hidden_layer->nr_of_neurons; i++){
         for(int j = 0; j < hidden_layer->in_size; j++){
             hidden_layer->weights[i * hidden_layer->in_size + j] -= eta * error_list_of_hidden[i] * avg_pixl_values[j];
@@ -318,56 +313,90 @@ void update_hidden_weights_and_bias(layer* hidden_layer, float* error_list_of_hi
     return;
 }
 
+typedef struct{
+    output hidden_output;
+    output output_output;
+    output probs;
+    float* error_output;
+    float* error_hidden;
+} workspace;
 
+void free_workspace(workspace* ws){
+    free(ws->hidden_output.output_list);
+    free(ws->output_output.output_list);
+    free(ws->probs.output_list);
+    free(ws->error_output);
+    free(ws->error_hidden);
+}
 
 
 float train_NN(dataset dataset, layer* hidden_layer, layer* output_layer, float eta){
     float accuracy = 0.0;
+    workspace ws;
 
+    ws.hidden_output.output_list  = malloc(hidden_layer->nr_of_neurons * sizeof(float));
+    ws.output_output.output_list  = malloc(output_layer->nr_of_neurons * sizeof(float));
+    ws.probs.output_list       = malloc(output_layer->nr_of_neurons * sizeof(float));
+    ws.error_output  = malloc(output_layer->nr_of_neurons * sizeof(float));
+    ws.error_hidden  = malloc(hidden_layer->nr_of_neurons * sizeof(float));
+    /*
+    To complete this ill need to change the structure of all of the functions
+    calc_hidden_layer_output, calc_output_layer_output, calc_softmax_prob
+    output_layer_errors, hidden_layer_errors
+    */
 
     for(int i = 0; i < dataset.nr_of_images; i++){
         // FORWARD
-        output hidden_output = calc_hidden_layer_output(dataset, *hidden_layer, i);
-        output output_output = calc_output_layer_output(hidden_output.output_list, *output_layer);
-        output probs = calc_softmax_prob(&output_output);
-        int prediction = argmax(probs);
+        calc_hidden_layer_output(dataset, *hidden_layer, i, &ws.hidden_output);
+        calc_output_layer_output(ws.hidden_output.output_list, *output_layer, &ws.output_output);
+        calc_softmax_prob(&ws.output_output, &ws.probs);
+        int prediction = argmax(ws.probs);
+
+        // output hidden_output = calc_hidden_layer_output(dataset, *hidden_layer, i);
+        // output output_output = calc_output_layer_output(hidden_output.output_list, *output_layer);
+        // output probs = calc_softmax_prob(&output_output);
 
         // BACKWARD
         // CALC ERRORS
-        float* error_output = output_layer_errors(dataset, probs, i);
-        float* error_hidden = hidden_layer_errors(hidden_output, *output_layer, error_output);
+        output_layer_errors(dataset, ws.probs, i, ws.error_output);
+        hidden_layer_errors(ws.hidden_output, *output_layer, ws.error_output, ws.error_hidden);
 
 
         // UPDATE EVERY TIME (BATCH TRAINING WAS SLOWER AND WORSE)
         float* image_data = &dataset.data[i * dataset.data_size];
-        update_hidden_weights_and_bias(hidden_layer, error_hidden, eta, image_data);
-        update_output_weights_and_bias(output_layer, error_output, eta, hidden_output);
+        update_hidden_weights_and_bias(hidden_layer, ws.error_hidden, eta, image_data);
+        update_output_weights_and_bias(output_layer, ws.error_output, eta, ws.hidden_output);
 
-        free(hidden_output.output_list);
-        free(output_output.output_list);
-        free(probs.output_list);
-        free(error_hidden);
-        free(error_output);
 
         if(prediction == dataset.labels[i]) accuracy++;
     }
-    
+    free_workspace(&ws);
     accuracy = (100.0 * accuracy) / dataset.nr_of_images;
     return accuracy;
 }
 
+typedef struct{
+    output hidden_output;
+    output output_output;
+}test_workspace;
+
 float test_on_data(dataset dataset, layer* hidden_layer, layer* output_layer){
     float accuracy = 0.0;
+
+    test_workspace tws;
+    tws.hidden_output.output_list  = malloc(hidden_layer->nr_of_neurons * sizeof(float));
+    tws.output_output.output_list  = malloc(output_layer->nr_of_neurons * sizeof(float));
+
     for(int i = 0; i < dataset.nr_of_images; i++){
-        output hidden_output = calc_hidden_layer_output(dataset, *hidden_layer, i);
-        output output_output = calc_output_layer_output(hidden_output.output_list, *output_layer);
+        calc_hidden_layer_output(dataset, *hidden_layer, i, &tws.hidden_output);
+        calc_output_layer_output(tws.hidden_output.output_list, *output_layer, &tws.output_output);
         // NO NEED FOR SOFTMAX
-        int prediction = argmax(output_output);
+        int prediction = argmax(tws.output_output);
         if(prediction == dataset.labels[i]) accuracy++;
         
-        free(hidden_output.output_list);
-        free(output_output.output_list);
     }
+    free(tws.hidden_output.output_list);
+    free(tws.output_output.output_list);
     accuracy =(100.0 * accuracy) / dataset.nr_of_images;
     return accuracy;
 }
@@ -392,7 +421,6 @@ int main(){
     layer output_layer = create_ran_layer(10, hidden_layer.nr_of_neurons);
 
     float eta = 0.02;
-
 
 
     // KEEP BATCH AT 1 BECAUSE update_hidden_weights_and_bias DOSENT WORK WITH THE i INPUT PROPERRLY
